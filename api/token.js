@@ -6,42 +6,49 @@ export default async function handler(req, res) {
   }
 
   try {
-    const tokenUrl = process.env.CORA_TOKEN_URL;
+    const tokenUrl = process.env.CORA_TOKEN_URL; // https://matls-clients.api.cora.com.br/token
     const clientId = process.env.CORA_CLIENT_ID;
 
     const certPem = Buffer.from(process.env.CORA_CERT_PEM_B64 || "", "base64").toString("utf8");
-    const keyPem = Buffer.from(process.env.CORA_KEY_PEM_B64 || "", "base64").toString("utf8");
+    const keyPem  = Buffer.from(process.env.CORA_KEY_PEM_B64  || "", "base64").toString("utf8");
 
     if (!tokenUrl || !clientId || !certPem || !keyPem) {
-      return res.status(500).json({
-        error: "Missing env vars",
-        tokenUrl: !!tokenUrl,
-        clientId: !!clientId,
-        cert: !!process.env.CORA_CERT_PEM_B64,
-        key: !!process.env.CORA_KEY_PEM_B64
-      });
+      return res.status(500).json({ error: "Missing env vars (tokenUrl/clientId/cert/key)" });
     }
 
-    const agent = new https.Agent({ cert: certPem, key: keyPem });
-
-    const body = new URLSearchParams({
+    const postData = new URLSearchParams({
       grant_type: "client_credentials",
-      client_id: clientId
+      client_id: clientId,
     }).toString();
 
-    const r = await fetch(tokenUrl, {
+    const url = new URL(tokenUrl);
+
+    const options = {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-      agent
+      hostname: url.hostname,
+      path: url.pathname,
+      cert: certPem,
+      key: keyPem,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(postData),
+      },
+    };
+
+    const coraResp = await new Promise((resolve, reject) => {
+      const r = https.request(options, (resp) => {
+        let data = "";
+        resp.on("data", (chunk) => (data += chunk));
+        resp.on("end", () => resolve({ status: resp.statusCode, body: data }));
+      });
+      r.on("error", reject);
+      r.write(postData);
+      r.end();
     });
 
-    const text = await r.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
-
-    return res.status(r.status).json(data);
-  } catch (e) {
-    return res.status(500).json({ error: "proxy_error", details: e?.message || String(e) });
+    // repassa exatamente o que a Cora retornar
+    res.status(coraResp.status || 500).send(coraResp.body);
+  } catch (err) {
+    res.status(500).json({ error: "proxy_error", detail: err?.message || String(err) });
   }
 }
