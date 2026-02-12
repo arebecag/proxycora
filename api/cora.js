@@ -1,76 +1,114 @@
 import https from "https";
 
-function b64ToPem(b64) {
+function b64ToBuf(b64) {
   if (!b64) return null;
-  const raw = Buffer.from(b64, "base64").toString("utf8");
-  // Se já veio PEM completo, retorna
-  if (raw.includes("BEGIN")) return raw;
-  // Se veio “cru”, retorna como está (mas o normal é PEM)
-  return raw;
+  // aceita "-----BEGIN" (pem direto) ou base64
+  if (b64.includes("BEGIN")) return Buffer.from(b64, "utf8");
+  return Buffer.from(b64, "base64");
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => resolve(data));
+  });
+}
+
+function requestHttps(url, { method, headers, body, cert, key }) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+
+    const options = {
+      method,
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      headers,
+      cert,
+      key,
+    };
+
+    const r = https.request(options, (res) => {
+      let out = "";
+      res.on("data", (c) => (out += c));
+      res.on("end", () =>
+        resolve({
+          status: res.statusCode || 0,
+          headers: res.headers,
+          body: out,
+        })
+      );
+    });
+
+    r.on("error", reject);
+    if (body) r.write(body);
+    r.end();
+  });
 }
 
 export default async function handler(req, res) {
   try {
-    const CERT = b64ToPem(process.env.CORA_CERT_PEM_B64);
-    const KEY = b64ToPem(process.env.CORA_KEY_PEM_B64);
+    const base =
+      (process.env.CORA_API_URL || "https://matls-clients.api.cora.com.br").replace(/\/$/, "");
 
-    if (!CERT || !KEY) {
-      return res.status(500).json({ error: "missing_cert_or_key" });
+    const path = req.query.path;
+    if (!path || typeof path !== "string" || !path.startsWith("/")) {
+      return res.status(400).json({
+        error: "missing_path",
+        message: "Use /api/cora?path=/v2/me (path deve começar com /)",
+      });
     }
 
-    // Base URL (produção por padrão)
-    const base = (process.env.CORA_API_URL || "https://matls-clients.api.cora.com.br").replace(/\/$/, "");
+    // mTLS
+    const cert = b64ToBuf(process.env.CORA_CERT_PEM_B64);
+    const key = b64ToBuf(process.env.CORA_KEY_PEM_B64);
+    if (!cert || !key) {
+      return res.status(500).json({
+        error: "missing_mtls",
+        message: "Faltam CORA_CERT_PEM_B64 e/ou CORA_KEY_PEM_B64 nas env vars",
+      });
+    }
 
-    // Monta path do destino: tudo que vier depois de /api/cora
-    const urlObj = new URL(req.url, "http://localhost");
-    const forwardPath = urlObj.pathname.replace(/^\/api\/cora/, "") || "/";
-    const forwardUrl = base + forwardPath + (urlObj.search || "");
+    // Usa Authorization que vem do cliente (SEMPRE)
+    const auth = req.headers.authorization;
+    if (!auth) {
+      return res.status(401).json({
+        error: "missing_authorization",
+        message: "Envie header Authorization: Bearer <token>",
+      });
+    }
 
-    // Lê body (se existir)
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    const bodyRaw = Buffer.concat(chunks);
-    const hasBody = bodyRaw && bodyRaw.length > 0;
+    const method = (req.method || "GET").toUpperCase();
 
-    // Monta headers (copiando Authorization e Idempotency-Key)
+    // repassa body em POST/PUT/PATCH
+    const bodyText = ["POST", "PUT", "PATCH"].includes(method) ? await readBody(req) : null;
+
     const headers = {
+      Authorization: auth,
       "Content-Type": req.headers["content-type"] || "application/json",
-      "Authorization": req.headers["authorization"] || "",
-      "Idempotency-Key": req.headers["idempotency-key"] || req.headers["Idempotency-Key"] || ""
+      // opcional: idempotency
+      ...(req.headers["idempotency-key"] ? { "Idempotency-Key": req.headers["idempotency-key"] } : {}),
     };
 
-    // remove headers vazios
-    Object.keys(headers).forEach((k) => {
-      if (!headers[k]) delete headers[k];
-    });
+    const targetUrl = base + path;
 
-    const agent = new https.Agent({
-      cert: CERT,
-      key: KEY,
-      rejectUnauthorized: true
-    });
-
-    const fetchOpts = {
-      method: req.method,
+    const resp = await requestHttps(targetUrl, {
+      method,
       headers,
-      agent
-    };
+      body: bodyText,
+      cert,
+      key,
+    });
 
-    if (hasBody && req.method !== "GET" && req.method !== "HEAD") {
-      fetchOpts.body = bodyRaw;
-    }
-
-    const r = await fetch(forwardUrl, fetchOpts);
-
-    const text = await r.text();
-    res.status(r.status);
-
-    // repassa content-type se vier
-    const ct = r.headers.get("content-type");
-    if (ct) res.setHeader("content-type", ct);
-
-    return res.send(text);
+    // devolve do jeito que veio
+    res.status(resp.status);
+    const ct = resp.headers["content-type"];
+    if (ct) res.setHeader("Content-Type", ct);
+    return res.send(resp.body);
   } catch (e) {
-    return res.status(500).json({ error: "proxy_error", message: String(e?.message || e) });
+    return res.status(500).json({
+      error: "proxy_error",
+      message: e?.message || String(e),
+    });
   }
 }
