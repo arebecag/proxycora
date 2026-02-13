@@ -1,30 +1,26 @@
-
-// api/boleto.js
 import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
 import https from 'https';
 
 export default async function handler(req, res) {
-  // CONFIGURAÇÃO CORS - ESSENCIAL!
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // Responder a preflight requests (OPTIONS)
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // Aceitar apenas POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
+    console.log("=== INÍCIO ===");
     
+    const token = req.headers.authorization?.replace('Bearer ', '');
     if (!token) {
       return res.status(401).json({ error: 'Token não fornecido' });
     }
@@ -36,23 +32,40 @@ export default async function handler(req, res) {
       ? 'https://matls-clients.api.cora.com.br/v2'
       : 'https://matls-clients.api.stage.cora.com.br/v2';
 
-    // Pegar certificados das variáveis de ambiente
-    const certContent = process.env.CORA_CERTIFICATE;
-    const keyContent = process.env.CORA_PRIVATE_KEY;
+    console.log("Ambiente:", environment);
+    console.log("URL:", baseUrl + "/invoices/pay");
 
-    if (!certContent || !keyContent) {
-      console.error('Certificados não encontrados');
-      return res.status(500).json({ error: 'Configuração de certificados ausente' });
+    // PEGAR CERTIFICADOS DAS SUAS VARIÁVEIS
+    const certBase64 = process.env.CORA_CERT_PEM_B64;
+    const keyBase64 = process.env.CORA_KEY_PEM_B64;
+
+    console.log("Certificado Base64 encontrado?", !!certBase64);
+    console.log("Key Base64 encontrada?", !!keyBase64);
+
+    if (!certBase64 || !keyBase64) {
+      return res.status(500).json({ 
+        error: 'Certificados não encontrados',
+        details: 'CORA_CERT_PEM_B64 e CORA_KEY_PEM_B64 são obrigatórios'
+      });
     }
+
+    // DECODIFICAR BASE64 PARA PEM
+    const certPem = Buffer.from(certBase64, 'base64').toString('utf-8');
+    const keyPem = Buffer.from(keyBase64, 'base64').toString('utf-8');
+
+    console.log("Certificado decodificado (primeira linha):", certPem.split('\n')[0]);
+    console.log("Key decodificada (primeira linha):", keyPem.split('\n')[0]);
 
     // Criar arquivos temporários
     const certPath = path.join('/tmp', 'certificate.pem');
     const keyPath = path.join('/tmp', 'private-key.key');
     
-    fs.writeFileSync(certPath, certContent);
-    fs.writeFileSync(keyPath, keyContent);
+    fs.writeFileSync(certPath, certPem);
+    fs.writeFileSync(keyPath, keyPem);
 
-    // Configurar agente HTTPS com certificados
+    console.log("Arquivos temporários criados");
+
+    // Configurar agente HTTPS
     const httpsAgent = new https.Agent({
       cert: fs.readFileSync(certPath),
       key: fs.readFileSync(keyPath),
@@ -60,55 +73,44 @@ export default async function handler(req, res) {
     });
 
     const boletoData = req.body;
-    
-    // Garantir que tem um code único
-    if (!boletoData.code) {
-      boletoData.code = `BOLETO_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    }
+    console.log("Payload:", JSON.stringify(boletoData, null, 2));
 
-    console.log('Enviando para Cora:', {
-      url: `${baseUrl}/invoices/pay`,
-      ambiente: environment
-    });
-
-    // Fazer requisição para a Cora com mTLS
+    // Enviar para Cora
     const response = await fetch(`${baseUrl}/invoices/pay`, {
       method: 'POST',
       agent: httpsAgent,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
-        'Idempotency-Key': boletoData.code
+        'Idempotency-Key': boletoData.code || `BOLETO_${Date.now()}`
       },
       body: JSON.stringify(boletoData)
     });
 
-    // Limpar arquivos temporários
+    console.log("Status da Cora:", response.status);
+
+    const responseData = await response.json();
+    console.log("Resposta da Cora:", responseData);
+
+    // Limpar arquivos
     try {
       fs.unlinkSync(certPath);
       fs.unlinkSync(keyPath);
-    } catch (e) {
-      console.warn('Erro ao limpar arquivos:', e.message);
-    }
-
-    const responseData = await response.json();
+    } catch (e) {}
 
     if (!response.ok) {
-      console.error('Erro da Cora:', responseData);
       return res.status(response.status).json({
         error: 'Erro na API da Cora',
         details: responseData
       });
     }
 
-    // Retornar resposta com headers CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(200).json(responseData);
 
   } catch (error) {
-    console.error('Erro no proxy:', error.message);
+    console.error("ERRO:", error);
     return res.status(500).json({ 
-      error: 'Erro interno no proxy',
+      error: 'Erro interno',
       message: error.message 
     });
   }
