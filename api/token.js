@@ -23,18 +23,20 @@ export default async function handler(req, res) {
 
     const url = new URL(tokenUrl);
 
-    const options = {
-      method: "POST",
-      hostname: url.hostname,
-      path: url.pathname,
-      cert: certPem,
-      key: keyPem,
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(postData),
-      },
-    };
+  const options = {
+  method: "POST",
+  hostname: url.hostname,
+  path: url.pathname,
+  cert: certPem,
+  key: keyPem,
+  rejectUnauthorized: true,
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Content-Length": Buffer.byteLength(postData),
+  },
+};
 
+    
     const coraResp = await new Promise((resolve, reject) => {
       const r = https.request(options, (resp) => {
         let data = "";
