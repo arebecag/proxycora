@@ -27,10 +27,11 @@ export default async function handler(req, res) {
       method: req.method,
       hostname: url.hostname,
       path: url.pathname + url.search,
-      headers: {
-        ...req.headers,
-        host: url.hostname,
-      },
+     headers: {
+  Authorization: req.headers.authorization,
+  "Content-Type": req.headers["content-type"] || "application/json",
+  "Idempotency-Key": req.headers["idempotency-key"],
+},
       cert,
       key,
     };
@@ -57,8 +58,9 @@ export default async function handler(req, res) {
       r.end();
     });
 
-    res.status(coraResp.status || 500);
-    return res.send(coraResp.body);
+   res.status(coraResp.status || 500);
+res.setHeader("Content-Type", coraResp.headers["content-type"] || "application/json");
+return res.send(coraResp.body);
 
   } catch (err) {
     return res.status(500).json({
