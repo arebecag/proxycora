@@ -1,5 +1,19 @@
 {
-  "name": "cora-proxy",
+  "name": "cora-integration",
   "version": "1.0.0",
-  "private": true
+  "description": "Integração com API da Cora",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "https": "^1.0.0"
+  },
+  "devDependencies": {
+    "vercel": "^32.0.0"
+  },
+  "engines": {
+    "node": "18.x"
+  }
 }
