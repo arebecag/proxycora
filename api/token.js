@@ -1,11 +1,10 @@
 // /api/token.js
 import https from 'https';
 
-// URL FIXA de produção (a que deve funcionar)
-const CORA_TOKEN_URL_FIXA = 'https://matls-clients.api.cora.com.br/oauth/token';
+// URL FIXA da Cora (produção)
+const CORA_TOKEN_URL = 'https://matls-clients.api.cora.com.br/oauth/token';
 
 export default async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (req.method !== 'POST') {
@@ -13,15 +12,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Usa a URL fixa, não a variável de ambiente
-    const tokenUrl = CORA_TOKEN_URL_FIXA;
+    // 1. Pega as credenciais das variáveis de ambiente
     const clientId = process.env.CORA_CLIENT_ID?.trim();
     const certPem = process.env.CORA_CERT_PEM_B64;
     const keyPem = process.env.CORA_KEY_PEM_B64;
 
-    // Log para diagnóstico
-    console.log('🔧 Usando URL fixa:', tokenUrl);
-    console.log('🔧 Client ID:', clientId ? '***' : 'não definido');
+    console.log('🚀 Iniciando token com URL fixa');
+    console.log('📍 Client ID presente:', !!clientId);
+    console.log('📍 Certificado presente:', !!certPem);
+    console.log('📍 Chave presente:', !!keyPem);
 
     if (!clientId || !certPem || !keyPem) {
       return res.status(500).json({
@@ -34,23 +33,26 @@ export default async function handler(req, res) {
       });
     }
 
+    // 2. Parseia a URL da Cora
+    const url = new URL(CORA_TOKEN_URL);
+    console.log('🌐 Hostname (para onde vai):', url.hostname);
+    console.log('🌐 Pathname:', url.pathname);
+
+    // 3. Prepara os dados do formulário
     const postData = new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: clientId,
     }).toString();
 
-    const url = new URL(tokenUrl);
-    console.log('📍 Hostname:', url.hostname);
-    console.log('📍 Pathname:', url.pathname); // Deve ser /oauth/token
-
+    // 4. Configura a requisição com o hostname e path CORRETOS
     const options = {
       method: 'POST',
-      hostname: url.hostname,
+      hostname: url.hostname, // 👈 ISSO É CRÍTICO: matls-clients.api.cora.com.br
       port: 443,
-      path: url.pathname,
+      path: url.pathname,      // /oauth/token
       cert: certPem,
       key: keyPem,
-      rejectUnauthorized: true, // Segurança em produção
+      rejectUnauthorized: true,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Content-Length': Buffer.byteLength(postData),
@@ -59,16 +61,13 @@ export default async function handler(req, res) {
 
     console.log('📤 Enviando requisição para a Cora...');
 
+    // 5. Faz a requisição HTTPS para a Cora (NÃO para a Vercel)
     const response = await new Promise((resolve, reject) => {
       const req = https.request(options, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
           console.log('📥 Status Code da Cora:', res.statusCode);
-          // Log do corpo apenas se não for 200 para não expor token
-          if (res.statusCode !== 200) {
-            console.log('📥 Corpo do erro:', data);
-          }
           resolve({ status: res.statusCode, body: data });
         });
       });
@@ -82,11 +81,11 @@ export default async function handler(req, res) {
       req.end();
     });
 
-    // Retorna a resposta exata da Cora para o cliente
+    // 6. Retorna a resposta da Cora
     return res.status(response.status).send(response.body);
 
   } catch (error) {
-    console.error('💥 Erro geral no token:', error);
+    console.error('💥 Erro no handler:', error);
     return res.status(500).json({ error: error.message });
   }
 }
