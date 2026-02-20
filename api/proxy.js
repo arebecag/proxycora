@@ -1,4 +1,4 @@
-// /api/proxy.js - Versão SIMPLIFICADA para testes
+// /api/proxy.js - Proxy para API de boletos
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   
@@ -9,9 +9,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing path" });
     }
 
-    // URL base do stage
-    const baseUrl = "https://matls-clients.api.stage.cora.com.br";
+    // API base do stage [citation:4]
+    const baseUrl = "https://api.stage.cora.com.br";
     
+    console.log(`🔄 Proxying ${req.method} to: ${baseUrl}${path}`);
+
     const response = await fetch(`${baseUrl}${path}`, {
       method: req.method,
       headers: {
@@ -26,7 +28,7 @@ export default async function handler(req, res) {
     return res.status(response.status).json(data);
 
   } catch (err) {
-    console.error("Proxy error:", err);
+    console.error("❌ Proxy error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
