@@ -1,33 +1,35 @@
-// /api/token.js - Versão que aceita qualquer formato
+import https from "https";
+
 function getPemFromEnv(value) {
   if (!value) return null;
-  
-  // Se já parece um PEM (começa com ---), usa direto
   if (value.includes('-----BEGIN')) {
     return value;
   }
-  
-  // Se não, tenta converter de Base64
   try {
     return Buffer.from(value, 'base64').toString('utf8');
   } catch {
-    return value; // Retorna original se não conseguir
+    return value;
   }
 }
 
 export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  
   try {
-    // Pega o valor direto da env (pode ser PEM ou Base64)
-    const certPem = getPemFromEnv(process.env.CORA_CERT_PEM_B64);
-    const keyPem = getPemFromEnv(process.env.CORA_KEY_PEM_B64);
-    
-    console.log("✅ Certificado carregado:", certPem ? "✓" : "✗");
-    console.log("✅ Chave carregada:", keyPem ? "✓" : "✗");
-    
-    // Resto do código igual...
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
     const tokenUrl = process.env.CORA_TOKEN_URL;
     const clientId = process.env.CORA_CLIENT_ID;
-    
+
+    if (!tokenUrl || !clientId) {
+      return res.status(500).json({ error: "Missing CORA_TOKEN_URL or CORA_CLIENT_ID" });
+    }
+
+    const cert = getPemFromEnv(process.env.CORA_CERT_PEM_B64);
+    const key = getPemFromEnv(process.env.CORA_KEY_PEM_B64);
+
     const postData = new URLSearchParams({
       grant_type: "client_credentials",
       client_id: clientId,
@@ -39,8 +41,8 @@ export default async function handler(req, res) {
       method: "POST",
       hostname: url.hostname,
       path: url.pathname,
-      cert: certPem,  // Usa direto o PEM
-      key: keyPem,     // Usa direto o PEM
+      cert,
+      key,
       rejectUnauthorized: true,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -60,7 +62,9 @@ export default async function handler(req, res) {
     });
 
     return res.status(coraResp.status).send(coraResp.body);
+
   } catch (err) {
+    console.error("Erro:", err);
     return res.status(500).json({ error: err.message });
   }
 }
