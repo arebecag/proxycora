@@ -10,36 +10,42 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Lê e limpa a URL do token (remove espaços e quebras de linha)
-    const tokenUrlRaw = process.env.CORA_TOKEN_URL;
-    if (!tokenUrlRaw) {
-      return res.status(500).json({ error: 'CORA_TOKEN_URL não configurada' });
-    }
-    const tokenUrl = tokenUrlRaw.trim();
-
-    const clientId = process.env.CORA_CLIENT_ID;
+    // Pega a URL da Cora (NÃO é a mesma da Vercel)
+    const tokenUrl = process.env.CORA_TOKEN_URL?.trim();
+    const clientId = process.env.CORA_CLIENT_ID?.trim();
     const certPem = process.env.CORA_CERT_PEM_B64;
     const keyPem = process.env.CORA_KEY_PEM_B64;
 
-    if (!clientId || !certPem || !keyPem) {
-      return res.status(500).json({ error: 'Credenciais incompletas' });
+    console.log('🔧 Token URL:', tokenUrl);
+    console.log('🔧 Client ID:', clientId);
+
+    if (!tokenUrl || !clientId || !certPem || !keyPem) {
+      return res.status(500).json({ 
+        error: 'Configuração incompleta',
+        missing: {
+          tokenUrl: !tokenUrl,
+          clientId: !clientId,
+          cert: !certPem,
+          key: !keyPem
+        }
+      });
     }
 
-    // Prepara os dados do formulário
     const postData = new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: clientId,
     }).toString();
 
-    // Parseia a URL para extrair hostname e path corretos
+    // Parseia a URL da Cora
     const url = new URL(tokenUrl);
-    console.log('📍 Hostname:', url.hostname);
-    console.log('📍 Pathname:', url.pathname); // DEVE SER "/oauth/token"
+    console.log('📍 Hostname (deve ser matls-clients.api.cora.com.br):', url.hostname);
+    console.log('📍 Pathname (deve ser /oauth/token):', url.pathname);
 
     const options = {
       method: 'POST',
-      hostname: url.hostname,
-      path: url.pathname, // <--- USA O PATH DA URL
+      hostname: url.hostname, // 👈 ISSO É CRÍTICO: usa o host da Cora, não da Vercel
+      port: 443,
+      path: url.pathname,
       cert: certPem,
       key: keyPem,
       rejectUnauthorized: true,
@@ -49,24 +55,33 @@ export default async function handler(req, res) {
       },
     };
 
-    // Faz a requisição
+    console.log('📤 Enviando requisição para:', url.hostname + url.pathname);
+
+    // Faz a requisição para a Cora
     const response = await new Promise((resolve, reject) => {
       const req = https.request(options, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
+          console.log('📥 Status da Cora:', res.statusCode);
           resolve({ status: res.statusCode, body: data });
         });
       });
-      req.on('error', reject);
+
+      req.on('error', (err) => {
+        console.error('❌ Erro na requisição:', err.message);
+        reject(err);
+      });
+
       req.write(postData);
       req.end();
     });
 
+    // Retorna a resposta da Cora
     return res.status(response.status).send(response.body);
 
   } catch (error) {
-    console.error('Erro no token:', error);
+    console.error('💥 Erro geral:', error);
     return res.status(500).json({ error: error.message });
   }
 }
