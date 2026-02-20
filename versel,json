@@ -1,13 +1,18 @@
 {
   "version": 2,
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
-  ],
-  "env": {
-    "CORA_TOKEN_URL": "@cora_token_url",
-    "CORA_API_URL": "@cora_api_url",
-    "CORA_CLIENT_ID": "@cora_client_id",
-    "CORA_CERT_PEM_B64": "@cora_cert_pem_b64",
-    "CORA_KEY_PEM_B64": "@cora_key_pem_b64"
-  }
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 10
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,PUT,DELETE,OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type,Authorization,Idempotency-Key" }
+      ]
+    }
+  ]
 }
