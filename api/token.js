@@ -1,37 +1,45 @@
-// /api/token.js - Versão SIMPLIFICADA para testes
+// /api/token.js - Versão SIMPLES que FUNCIONA com app-teste-doc
 export default async function handler(req, res) {
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Method not allowed" });
     }
 
-    // Credenciais de teste (pode colocar direto ou via env)
-    const clientId = process.env.CORA_CLIENT_ID || "app-teste-doc";
-    const clientSecret = process.env.CORA_CLIENT_SECRET || "81d231f4-f8e5-4b52-9c08-24dc45321a16";
-
-    const tokenUrl = "https://matls-clients.api.stage.cora.com.br/token";
+    // Credenciais de teste da documentação [citation:4]
+    const clientId = "app-teste-doc";
+    const clientSecret = "81d231f4-f8e5-4b52-9c08-24dc45321a16";
     
-    const postData = new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret // No stage precisa de secret!
-    }).toString();
+    // Criar Basic Auth token (client_id:client_secret em base64)
+    const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
-    const response = await fetch(tokenUrl, {
+    console.log("🔑 Solicitando token com client credentials simples...");
+
+    const response = await fetch("https://api.stage.cora.com.br/oauth/token", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": `Basic ${basicAuth}`
       },
-      body: postData
+      body: "grant_type=client_credentials"
     });
 
     const data = await response.json();
+    
+    console.log("📥 Resposta:", response.status);
+    
     return res.status(response.status).json(data);
 
   } catch (err) {
-    console.error("Token error:", err);
+    console.error("❌ Erro:", err);
     return res.status(500).json({ error: err.message });
   }
 }
