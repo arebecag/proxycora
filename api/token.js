@@ -1,77 +1,86 @@
-// /api/token.js - Versão que aceita vários formatos de chave
+// /api/token.js
 import https from 'https';
+import fetch from 'node-fetch';
 
+// URL FIXA da Cora (produção)
 const CORA_TOKEN_URL = 'https://matls-clients.api.cora.com.br/oauth/token';
 
+// Pega as credenciais das variáveis de ambiente
+const certPem = process.env.CORA_CERT_PEM_B64;
+const keyPem = process.env.CORA_KEY_PEM_B64;
+
+// Cria o agente HTTPS com os certificados
+const httpsAgent = new https.Agent({
+  cert: certPem,
+  key: keyPem,
+  rejectUnauthorized: true,
+});
+
 export default async function handler(req, res) {
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
 
+  // Só aceita POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
     const clientId = process.env.CORA_CLIENT_ID?.trim();
-    let certPem = process.env.CORA_CERT_PEM_B64;
-    let keyPem = process.env.CORA_KEY_PEM_B64;
 
-    // Log do formato da chave (sem mostrar o conteúdo completo)
-    console.log('🔑 Formato da chave:', {
-      comecaCom: keyPem?.substring(0, 30),
-      terminaCom: keyPem?.substring(keyPem.length - 30),
-      tamanho: keyPem?.length
-    });
+    // Logs para debug (vão aparecer nos logs da Vercel)
+    console.log('🚀 Iniciando requisição de token');
+    console.log('📍 URL:', CORA_TOKEN_URL);
+    console.log('📍 Client ID presente:', !!clientId);
+    console.log('📍 Certificado presente:', !!certPem);
+    console.log('📍 Chave presente:', !!keyPem);
 
-    if (!clientId || !certPem || !keyPem) {
-      return res.status(500).json({ error: 'Credenciais incompletas' });
+    // Validações
+    if (!clientId) {
+      return res.status(500).json({ error: 'CORA_CLIENT_ID não configurado' });
+    }
+    if (!certPem || !keyPem) {
+      return res.status(500).json({ error: 'Certificado ou chave não configurados' });
     }
 
+    // Prepara os dados do formulário
     const postData = new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: clientId,
-    }).toString();
-
-    const url = new URL(CORA_TOKEN_URL);
-
-    const options = {
-      method: 'POST',
-      hostname: url.hostname,
-      port: 443,
-      path: url.pathname,
-      cert: certPem,
-      key: keyPem,
-      rejectUnauthorized: true,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(postData),
-      },
-    };
-
-    console.log('📤 Enviando requisição para produção...');
-
-    const response = await new Promise((resolve, reject) => {
-      const req = https.request(options, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          console.log('📥 Status Code da Cora:', res.statusCode);
-          resolve({ status: res.statusCode, body: data });
-        });
-      });
-
-      req.on('error', (err) => {
-        console.error('❌ Erro na requisição:', err.message);
-        reject(err);
-      });
-
-      req.write(postData);
-      req.end();
     });
 
-    return res.status(response.status).send(response.body);
+    console.log('📤 Enviando requisição para a Cora...');
+
+    // FAZ A REQUISIÇÃO PARA A CORA (NÃO PARA A VERCEL)
+    const response = await fetch(CORA_TOKEN_URL, {
+      method: 'POST',
+      agent: httpsAgent, // <--- ISSO É CRÍTICO
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: postData.toString(),
+    });
+
+    console.log('📥 Status Code da Cora:', response.status);
+
+    // Lê a resposta
+    const responseText = await response.text();
+    
+    // Tenta parsear como JSON para retornar bonito
+    try {
+      const jsonResponse = JSON.parse(responseText);
+      return res.status(response.status).json(jsonResponse);
+    } catch {
+      // Se não for JSON, retorna como texto mesmo
+      return res.status(response.status).send(responseText);
+    }
 
   } catch (error) {
-    console.error('💥 Erro:', error);
-    return res.status(500).json({ error: error.message });
+    console.error('💥 Erro detalhado:', error);
+    return res.status(500).json({ 
+      error: 'Erro interno',
+      message: error.message,
+      stack: error.stack 
+    });
   }
 }
