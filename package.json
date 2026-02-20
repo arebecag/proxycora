@@ -1,17 +1,19 @@
 {
   "name": "cora-integration",
   "version": "1.0.0",
-  "description": "Integração com API da Cora",
+  "description": "Integração com API da Cora - Produção",
   "main": "index.js",
   "scripts": {
     "dev": "vercel dev",
     "deploy": "vercel --prod"
   },
   "dependencies": {
-    "node-fetch": "^2.7.0",
     "https": "^1.0.0"
   },
   "devDependencies": {
     "vercel": "^41.0.0"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
