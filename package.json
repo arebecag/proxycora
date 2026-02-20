@@ -11,9 +11,7 @@
     "https": "^1.0.0"
   },
   "devDependencies": {
-    "vercel": "^32.0.0"
-  },
-  "engines": {
-    "node": "18.x"
+    "vercel": "^41.0.0"
   }
+  // 👆 engines removido - Vercel usará a versão padrão
 }
