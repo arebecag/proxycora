@@ -1,70 +1,82 @@
-import https from "https";
-
-function getPemFromEnv(value) {
-  if (!value) return null;
-  if (value.includes('-----BEGIN')) {
-    return value;
-  }
-  try {
-    return Buffer.from(value, 'base64').toString('utf8');
-  } catch {
-    return value;
-  }
-}
+import https from 'https';
 
 export default async function handler(req, res) {
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   
-  try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method not allowed" });
-    }
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
+  try {
+    // Lê as variáveis de ambiente
     const tokenUrl = process.env.CORA_TOKEN_URL;
     const clientId = process.env.CORA_CLIENT_ID;
+    const certPem = process.env.CORA_CERT_PEM_B64;
+    const keyPem = process.env.CORA_KEY_PEM_B64;
 
-    if (!tokenUrl || !clientId) {
-      return res.status(500).json({ error: "Missing CORA_TOKEN_URL or CORA_CLIENT_ID" });
+    // Log para depuração (visível nos logs da Vercel)
+    console.log('🔧 CORA_TOKEN_URL lida:', tokenUrl);
+    console.log('🔧 CORA_CLIENT_ID lida:', clientId ? '***' : 'não definida');
+    console.log('🔧 Certificado lido:', certPem ? 'sim' : 'não');
+
+    if (!tokenUrl || !clientId || !certPem || !keyPem) {
+      return res.status(500).json({ 
+        error: 'Configuração incompleta',
+        missing: {
+          tokenUrl: !tokenUrl,
+          clientId: !clientId,
+          cert: !certPem,
+          key: !keyPem
+        }
+      });
     }
 
-    const cert = getPemFromEnv(process.env.CORA_CERT_PEM_B64);
-    const key = getPemFromEnv(process.env.CORA_KEY_PEM_B64);
-
+    // Prepara os dados do token
     const postData = new URLSearchParams({
-      grant_type: "client_credentials",
+      grant_type: 'client_credentials',
       client_id: clientId,
     }).toString();
 
     const url = new URL(tokenUrl);
+    console.log('📍 URL parseada:', { hostname: url.hostname, pathname: url.pathname });
 
     const options = {
-      method: "POST",
+      method: 'POST',
       hostname: url.hostname,
       path: url.pathname,
-      cert,
-      key,
+      cert: certPem,
+      key: keyPem,
       rejectUnauthorized: true,
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(postData),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(postData),
       },
     };
 
-    const coraResp = await new Promise((resolve, reject) => {
-      const r = https.request(options, (resp) => {
-        let data = "";
-        resp.on("data", (chunk) => (data += chunk));
-        resp.on("end", () => resolve({ status: resp.statusCode, body: data }));
+    // Faz a requisição para a Cora
+    const response = await new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          console.log('📥 Resposta da Cora - Status:', res.statusCode);
+          resolve({ status: res.statusCode, body: data });
+        });
       });
-      r.on("error", reject);
-      r.write(postData);
-      r.end();
+      req.on('error', (err) => {
+        console.error('❌ Erro na requisição:', err.message);
+        reject(err);
+      });
+      req.write(postData);
+      req.end();
     });
 
-    return res.status(coraResp.status).send(coraResp.body);
+    // Retorna a resposta exata da Cora
+    return res.status(response.status).send(response.body);
 
-  } catch (err) {
-    console.error("Erro:", err);
-    return res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error('💥 Erro geral:', error);
+    return res.status(500).json({ error: error.message });
   }
 }
