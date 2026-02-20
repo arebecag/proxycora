@@ -1,45 +1,66 @@
-// /api/token.js - Versão SIMPLES que FUNCIONA com app-teste-doc
-export default async function handler(req, res) {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+// /api/token.js - Versão que aceita qualquer formato
+function getPemFromEnv(value) {
+  if (!value) return null;
+  
+  // Se já parece um PEM (começa com ---), usa direto
+  if (value.includes('-----BEGIN')) {
+    return value;
   }
-
+  
+  // Se não, tenta converter de Base64
   try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method not allowed" });
-    }
+    return Buffer.from(value, 'base64').toString('utf8');
+  } catch {
+    return value; // Retorna original se não conseguir
+  }
+}
 
-    // Credenciais de teste da documentação [citation:4]
-    const clientId = "app-teste-doc";
-    const clientSecret = "81d231f4-f8e5-4b52-9c08-24dc45321a16";
+export default async function handler(req, res) {
+  try {
+    // Pega o valor direto da env (pode ser PEM ou Base64)
+    const certPem = getPemFromEnv(process.env.CORA_CERT_PEM_B64);
+    const keyPem = getPemFromEnv(process.env.CORA_KEY_PEM_B64);
     
-    // Criar Basic Auth token (client_id:client_secret em base64)
-    const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    console.log("✅ Certificado carregado:", certPem ? "✓" : "✗");
+    console.log("✅ Chave carregada:", keyPem ? "✓" : "✗");
+    
+    // Resto do código igual...
+    const tokenUrl = process.env.CORA_TOKEN_URL;
+    const clientId = process.env.CORA_CLIENT_ID;
+    
+    const postData = new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+    }).toString();
 
-    console.log("🔑 Solicitando token com client credentials simples...");
+    const url = new URL(tokenUrl);
 
-    const response = await fetch("https://api.stage.cora.com.br/oauth/token", {
+    const options = {
       method: "POST",
+      hostname: url.hostname,
+      path: url.pathname,
+      cert: certPem,  // Usa direto o PEM
+      key: keyPem,     // Usa direto o PEM
+      rejectUnauthorized: true,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": `Basic ${basicAuth}`
+        "Content-Length": Buffer.byteLength(postData),
       },
-      body: "grant_type=client_credentials"
+    };
+
+    const coraResp = await new Promise((resolve, reject) => {
+      const r = https.request(options, (resp) => {
+        let data = "";
+        resp.on("data", (chunk) => (data += chunk));
+        resp.on("end", () => resolve({ status: resp.statusCode, body: data }));
+      });
+      r.on("error", reject);
+      r.write(postData);
+      r.end();
     });
 
-    const data = await response.json();
-    
-    console.log("📥 Resposta:", response.status);
-    
-    return res.status(response.status).json(data);
-
+    return res.status(coraResp.status).send(coraResp.body);
   } catch (err) {
-    console.error("❌ Erro:", err);
     return res.status(500).json({ error: err.message });
   }
 }
