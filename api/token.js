@@ -2,39 +2,54 @@ import https from "https";
 
 function b64ToPem(b64) {
   if (!b64) throw new Error("Missing base64 cert/key");
-  // Converte Base64 para string PEM
   return Buffer.from(b64, "base64").toString("utf8");
 }
 
 export default async function handler(req, res) {
-  // Configurar CORS se necessário
+  // Configurar CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   try {
+    // Apenas POST permitido
     if (req.method !== "POST") {
       return res.status(405).json({ error: "Method not allowed" });
     }
 
-    // Configurações do ambiente
-    const tokenUrl = process.env.CORA_TOKEN_URL; // https://matls-clients.api.cora.com.br/oauth/token
+    // Pegar variáveis de ambiente
+    const tokenUrl = process.env.CORA_TOKEN_URL;
     const clientId = process.env.CORA_CLIENT_ID;
 
+    // Validar variáveis
     if (!tokenUrl || !clientId) {
-      console.error("Missing env vars:", { tokenUrl: !!tokenUrl, clientId: !!clientId });
-      return res.status(500).json({ error: "Missing CORA_TOKEN_URL or CORA_CLIENT_ID" });
+      console.error("Missing env vars:", { 
+        tokenUrl: !!tokenUrl, 
+        clientId: !!clientId 
+      });
+      return res.status(500).json({ 
+        error: "Missing CORA_TOKEN_URL or CORA_CLIENT_ID" 
+      });
     }
 
-    // Converte certificado e chave de Base64 para PEM
+    // Converter certificado e chave
     let cert, key;
     try {
       cert = b64ToPem(process.env.CORA_CERT_PEM_B64);
       key = b64ToPem(process.env.CORA_KEY_PEM_B64);
     } catch (e) {
       console.error("Error converting cert/key:", e);
-      return res.status(500).json({ error: "Invalid certificate or key format" });
+      return res.status(500).json({ 
+        error: "Invalid certificate or key format" 
+      });
     }
 
-    // Dados para o token
+    // Preparar dados do token
     const postData = new URLSearchParams({
       grant_type: "client_credentials",
       client_id: clientId,
@@ -42,6 +57,7 @@ export default async function handler(req, res) {
 
     const url = new URL(tokenUrl);
 
+    // Opções da requisição
     const options = {
       method: "POST",
       hostname: url.hostname,
@@ -49,7 +65,7 @@ export default async function handler(req, res) {
       path: url.pathname,
       cert: cert,
       key: key,
-      rejectUnauthorized: true, // Importante para produção
+      rejectUnauthorized: true,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "Content-Length": Buffer.byteLength(postData),
@@ -58,7 +74,7 @@ export default async function handler(req, res) {
 
     console.log("Requesting token from:", url.hostname + url.pathname);
 
-    // Faz a requisição para a Cora
+    // Fazer requisição para Cora
     const response = await new Promise((resolve, reject) => {
       const req = https.request(options, (res) => {
         let data = "";
@@ -81,10 +97,22 @@ export default async function handler(req, res) {
       req.end();
     });
 
-    // Log para debug (remova em produção)
+    // Log response status
     console.log("Token response status:", response.status);
-    
-    // Retorna a resposta para o cliente
+
+    // Tentar parsear o body para ver se é JSON
+    let responseBody = response.body;
+    try {
+      // Se for string, tenta parsear para garantir que é JSON válido
+      if (typeof response.body === 'string') {
+        JSON.parse(response.body);
+      }
+    } catch (e) {
+      // Se não for JSON, mantém como string
+      console.log("Response is not JSON");
+    }
+
+    // Retornar resposta
     res.status(response.status).send(response.body);
 
   } catch (error) {
