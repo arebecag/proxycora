@@ -1,7 +1,6 @@
-// /api/token.js
+// /api/token.js - Versão que aceita vários formatos de chave
 import https from 'https';
 
-// URL FIXA da Cora (produção)
 const CORA_TOKEN_URL = 'https://matls-clients.api.cora.com.br/oauth/token';
 
 export default async function handler(req, res) {
@@ -12,63 +11,67 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Pega as credenciais
     const clientId = process.env.CORA_CLIENT_ID?.trim();
-    const certPem = process.env.CORA_CERT_PEM_B64;
-    const keyPem = process.env.CORA_KEY_PEM_B64;
+    let certPem = process.env.CORA_CERT_PEM_B64;
+    let keyPem = process.env.CORA_KEY_PEM_B64;
 
-    console.log('🚀 Iniciando token com fetch');
-    console.log('📍 Client ID presente:', !!clientId);
-    console.log('📍 Certificado presente:', !!certPem);
-    console.log('📍 Chave presente:', !!keyPem);
-
-    if (!clientId || !certPem || !keyPem) {
-      return res.status(500).json({
-        error: 'Credenciais incompletas',
-        missing: {
-          clientId: !clientId,
-          cert: !certPem,
-          key: !keyPem
-        }
-      });
-    }
-
-    // 2. Cria um agente HTTPS com o certificado e a chave
-    //    Isso é o que realmente importa para a autenticação mTLS
-    const agent = new https.Agent({
-      cert: certPem,
-      key: keyPem,
-      rejectUnauthorized: true, // Segurança em produção
+    // Log do formato da chave (sem mostrar o conteúdo completo)
+    console.log('🔑 Formato da chave:', {
+      comecaCom: keyPem?.substring(0, 30),
+      terminaCom: keyPem?.substring(keyPem.length - 30),
+      tamanho: keyPem?.length
     });
 
-    // 3. Prepara os dados do formulário
+    if (!clientId || !certPem || !keyPem) {
+      return res.status(500).json({ error: 'Credenciais incompletas' });
+    }
+
     const postData = new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: clientId,
-    });
+    }).toString();
 
-    console.log('📤 Enviando requisição para:', CORA_TOKEN_URL);
+    const url = new URL(CORA_TOKEN_URL);
 
-    // 4. Faz a requisição usando fetch com o agente HTTPS personalizado
-    const response = await fetch(CORA_TOKEN_URL, {
+    const options = {
       method: 'POST',
-      agent: agent, // <--- AQUI ESTÁ A CHAVE: o agente com o certificado
+      hostname: url.hostname,
+      port: 443,
+      path: url.pathname,
+      cert: certPem,
+      key: keyPem,
+      rejectUnauthorized: true,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(postData),
       },
-      body: postData.toString(),
+    };
+
+    console.log('📤 Enviando requisição para produção...');
+
+    const response = await new Promise((resolve, reject) => {
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          console.log('📥 Status Code da Cora:', res.statusCode);
+          resolve({ status: res.statusCode, body: data });
+        });
+      });
+
+      req.on('error', (err) => {
+        console.error('❌ Erro na requisição:', err.message);
+        reject(err);
+      });
+
+      req.write(postData);
+      req.end();
     });
 
-    console.log('📥 Status Code da Cora:', response.status);
-
-    // 5. Lê o corpo da resposta
-    const responseText = await response.text();
-    
-    // 6. Retorna a resposta exata da Cora para o cliente
-    res.status(response.status).send(responseText);
+    return res.status(response.status).send(response.body);
 
   } catch (error) {
-    console.error('💥 Erro no handler:', error);
+    console.error('💥 Erro:', error);
     return res.status(500).json({ error: error.message });
   }
 }
